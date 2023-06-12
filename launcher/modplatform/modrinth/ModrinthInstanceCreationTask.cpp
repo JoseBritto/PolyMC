@@ -195,8 +195,8 @@ bool ModrinthCreationTask::createInstance()
         Override::createOverrides("client-overrides", parent_folder, client_override_path);
 
         // Apply the overrides
-        if (!FS::overrideFolder(mcPath, client_override_path)) {
-            setError(tr("Could not rename the client overrides folder:\n") + "client overrides");
+        if (!FS::mergeFolders(mcPath, client_override_path)) {
+            setError(tr("Could not overwrite / create new files:\n") + "client overrides");
             return false;
         }
     }
@@ -304,6 +304,11 @@ bool ModrinthCreationTask::parseManifest(const QString& index_path, std::vector<
             for (const auto& modInfo : jsonFiles) {
                 Modrinth::File file;
                 file.path = Json::requireString(modInfo, "path");
+
+                if (QDir::isAbsolutePath(file.path) || QDir::cleanPath(file.path).startsWith("..")) {
+                    qDebug() << "Skipped file that tries to place itself in an absolute location or in a parent directory.";
+                    continue;
+                }
 
                 auto env = Json::ensureObject(modInfo, "env");
                 // 'env' field is optional

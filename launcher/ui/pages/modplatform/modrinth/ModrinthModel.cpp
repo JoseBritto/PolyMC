@@ -41,6 +41,7 @@
 #include "minecraft/MinecraftInstance.h"
 #include "minecraft/PackProfile.h"
 #include "ui/dialogs/ModDownloadDialog.h"
+#include "ui/widgets/ProjectItem.h"
 
 #include <QMessageBox>
 
@@ -74,31 +75,40 @@ auto ModpackListModel::data(const QModelIndex& index, int role) const -> QVarian
     }
 
     Modrinth::Modpack pack = modpacks.at(pos);
-    if (role == Qt::DisplayRole) {
-        return pack.name;
-    } else if (role == Qt::ToolTipRole) {
-        if (pack.description.length() > 100) {
-            // some magic to prevent to long tooltips and replace html linebreaks
-            QString edit = pack.description.left(97);
-            edit = edit.left(edit.lastIndexOf("<br>")).left(edit.lastIndexOf(" ")).append("...");
-            return edit;
+    switch (role) {
+        case Qt::ToolTipRole: {
+            if (pack.description.length() > 100) {
+                // some magic to prevent to long tooltips and replace html linebreaks
+                QString edit = pack.description.left(97);
+                edit = edit.left(edit.lastIndexOf("<br>")).left(edit.lastIndexOf(" ")).append("...");
+                return edit;
+            }
+            return pack.description;
         }
-        return pack.description;
-    } else if (role == Qt::DecorationRole) {
-        if (m_logoMap.contains(pack.iconName)) {
-            auto icon = m_logoMap.value(pack.iconName);
-            // FIXME: This doesn't really belong here, but Qt doesn't offer a good way right now ;(
-            auto icon_scaled = QIcon(icon.pixmap(48, 48).scaledToWidth(48));
+        case Qt::DecorationRole: {
+            if (m_logoMap.contains(pack.iconName))
+                return m_logoMap.value(pack.iconName);
 
-            return icon_scaled;
+            QIcon icon = APPLICATION->getThemedIcon("screenshot-placeholder");
+            ((ModpackListModel*)this)->requestLogo(pack.iconName, pack.iconUrl.toString());
+            return icon;
         }
-        QIcon icon = APPLICATION->getThemedIcon("screenshot-placeholder");
-        ((ModpackListModel*)this)->requestLogo(pack.iconName, pack.iconUrl.toString());
-        return icon;
-    } else if (role == Qt::UserRole) {
-        QVariant v;
-        v.setValue(pack);
-        return v;
+        case Qt::UserRole: {
+            QVariant v;
+            v.setValue(pack);
+            return v;
+        }
+        case Qt::SizeHintRole:
+            return QSize(0, 58);
+        // Custom data
+        case UserDataTypes::TITLE:
+            return pack.name;
+        case UserDataTypes::DESCRIPTION:
+            return pack.description;
+        case UserDataTypes::SELECTED:
+            return false;
+        default:
+            break;
     }
 
     return {};
@@ -168,10 +178,9 @@ void ModpackListModel::refresh()
     performPaginatedSearch();
 }
 
-static auto sortFromIndex(int index) -> QString
+static QString sortFromIndex(int index, bool& unhandled)
 {
     switch(index){
-    default:
     case 0:
         return "relevance";
     case 1:
@@ -182,6 +191,10 @@ static auto sortFromIndex(int index) -> QString
         return "newest";
     case 4:
         return "updated";
+    default:
+        unhandled = true;
+        qWarning() << QString("Unhandled case in sortFromIndex (%i)").arg(QString::number(index));
+        break;
     }
 
     return {};
@@ -189,10 +202,10 @@ static auto sortFromIndex(int index) -> QString
 
 void ModpackListModel::searchWithTerm(const QString& term, const int sort)
 {
-    if(sort > 5 || sort < 0)
+    bool unhandled = false;
+    auto sort_str = sortFromIndex(sort, unhandled);
+    if (unhandled)
         return;
-
-    auto sort_str = sortFromIndex(sort);
 
     if (currentSearchTerm == term && currentSearchTerm.isNull() == term.isNull() && currentSort == sort_str) {
         return;
@@ -217,7 +230,7 @@ void ModpackListModel::getLogo(const QString& logo, const QString& logoUrl, Logo
 
 void ModpackListModel::requestLogo(QString logo, QString url)
 {
-    if (m_loadingLogos.contains(logo) || m_failedLogos.contains(logo)) {
+    if (m_loadingLogos.contains(logo) || m_failedLogos.contains(logo) || url.isEmpty()) {
         return;
     }
 
@@ -301,6 +314,8 @@ void ModpackListModel::searchRequestFinished(QJsonDocument& doc_all)
 
 void ModpackListModel::searchRequestFailed(QString reason)
 {
+    qWarning() << QString("searchRequestFailed reason: %1").arg(reason);
+
     auto failed_action = jobPtr->getFailedActions().at(0);
     if (!failed_action->m_reply) {
         // Network error
